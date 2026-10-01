@@ -1,0 +1,8 @@
+.env
+backend/data/
+node_modules/
+dist/
+.venv/
+.playwright-mcp/
+.DS_Store
+*.mp4
