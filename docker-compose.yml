@@ -1,20 +1,25 @@
 services:
   db:
-    image: pgvector/pgvector:pg17
+    # VillageSQL 8.4 (MySQL fork) with vsql_vector 0.0.1.
+    # First start of an empty datadir runs SET PERSIST vsql_allow_preview_extensions = ON
+    # and INSTALL EXTENSION vsql_vector. Also published as tag vector-local.
+    image: ghcr.io/ronaldbradford/villagesql-server:nightly.2026-09-14-vector
     container_name: marginalia-db
     environment:
-      POSTGRES_USER: rag
-      POSTGRES_PASSWORD: rag
-      POSTGRES_DB: rag
+      MYSQL_ROOT_PASSWORD: rag
+      MYSQL_DATABASE: rag
+      MYSQL_USER: rag
+      MYSQL_PASSWORD: rag
     ports:
-      - "5433:5432"
+      - "3306:3306"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - villagesql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
-      interval: 3s
-      timeout: 3s
-      retries: 20
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prag"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
 volumes:
-  pgdata:
+  villagesql_data:

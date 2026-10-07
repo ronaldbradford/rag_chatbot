@@ -1,12 +1,11 @@
 import uuid
 from datetime import datetime, timezone
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from .config import get_settings
+from .sqltypes import SVector, UTCDateTime
 
 
 def _uuid() -> str:
@@ -17,12 +16,16 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+_MYSQL = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+
+
 class Base(DeclarativeBase):
     pass
 
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = _MYSQL
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(512))
@@ -35,7 +38,7 @@ class Document(Base):
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     embed_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True
@@ -44,6 +47,7 @@ class Document(Base):
 
 class Chunk(Base):
     __tablename__ = "chunks"
+    __table_args__ = _MYSQL
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     document_id: Mapped[str] = mapped_column(
@@ -52,13 +56,16 @@ class Chunk(Base):
     page: Mapped[int] = mapped_column(Integer)
     idx: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
-    embedding = mapped_column(Vector(get_settings().embedding_dim))
+    embedding: Mapped[list[float]] = mapped_column(
+        SVector(get_settings().embedding_dim), nullable=False
+    )
 
     document: Mapped[Document] = relationship(back_populates="chunks")
 
 
 class Conversation(Base):
     __tablename__ = "conversations"
+    __table_args__ = _MYSQL
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     title: Mapped[str] = mapped_column(String(200), default="New conversation")
@@ -66,8 +73,8 @@ class Conversation(Base):
     document_id: Mapped[str | None] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
     messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation",
@@ -79,6 +86,7 @@ class Conversation(Base):
 
 class Message(Base):
     __tablename__ = "messages"
+    __table_args__ = _MYSQL
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     conversation_id: Mapped[str] = mapped_column(
@@ -88,7 +96,7 @@ class Message(Base):
     content: Mapped[str] = mapped_column(Text)
     # Snapshot of the passages shown to the model, so citations survive
     # re-indexing or deletion of the underlying chunks.
-    citations: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    citations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
