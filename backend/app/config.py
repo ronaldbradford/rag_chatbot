@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # vectors on next startup; re-index documents from the UI afterwards.
     embedding_dim: int = 1536
 
-    database_url: str = "postgresql+asyncpg://rag:rag@localhost:5433/rag"
+    database_url: str = "mysql+aiomysql://rag:rag@127.0.0.1:3306/rag?charset=utf8mb4"
     upload_dir: Path = BACKEND_DIR / "data" / "uploads"
     max_upload_mb: int = 50
 

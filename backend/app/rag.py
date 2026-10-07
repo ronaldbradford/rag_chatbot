@@ -11,6 +11,7 @@ from .config import get_settings
 from .db import SessionLocal
 from .models import Chunk, Document
 from .pdf import chunk_pages, extract_pages
+from .sqltypes import vector_literal
 
 log = logging.getLogger("marginalia")
 settings = get_settings()
@@ -87,31 +88,49 @@ async def ingest(doc_id: str) -> None:
 
 async def retrieve(s, query: str, document_id: str | None) -> list[dict]:
     [qvec] = await openrouter.embed([query])
-    distance = Chunk.embedding.cosine_distance(qvec).label("distance")
-    stmt = (
-        select(Chunk, Document.name, distance)
-        .join(Document, Document.id == Chunk.document_id)
-        .where(Document.status == "ready")
-        .order_by(distance)
-        .limit(settings.top_k)
+    return await search_by_vector(s, qvec, document_id)
+
+
+async def search_by_vector(s, qvec: list[float], document_id: str | None) -> list[dict]:
+    """Exact cosine search over ready chunks.
+
+    This vsql_vector build rejects bound parameters inside ``COSINE_DISTANCE``
+    ("argument must be a custom type or string constant") but accepts a SQL
+    string constant, including at 1536 dimensions. The literal is validated
+    as numbers only and inlined. The embedding column is not selected: copying
+    an ``SVECTOR`` into an internal temporary table fails on this build, and
+    ``TEMPORARY`` tables with ``SVECTOR`` columns fail the same way.
+    """
+    if len(qvec) != settings.embedding_dim:
+        raise ValueError(
+            f"query vector has {len(qvec)} dimensions, EMBEDDING_DIM is {settings.embedding_dim}"
+        )
+    literal = vector_literal(qvec)
+    sql = (
+        "SELECT c.id AS id, c.document_id AS document_id, c.page AS page, "
+        "c.content AS content, d.name AS document_name, "
+        f"COSINE_DISTANCE(c.embedding, '{literal}') AS distance "
+        "FROM chunks c "
+        "JOIN documents d ON d.id = c.document_id "
+        "WHERE d.status = 'ready'"
     )
+    params: dict = {"k": int(settings.top_k)}
     if document_id:
-        stmt = stmt.where(Chunk.document_id == document_id)
-    # HNSW applies WHERE filters after fetching ef_search candidates; iterative
-    # scans keep searching so a filtered query still returns top_k rows.
-    await s.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
-    rows = (await s.execute(stmt)).all()
+        sql += " AND c.document_id = :document_id"
+        params["document_id"] = document_id
+    sql += " ORDER BY distance LIMIT :k"
+    rows = (await s.execute(text(sql), params)).all()
     return [
         {
             "n": i,
-            "chunk_id": chunk.id,
-            "document_id": chunk.document_id,
-            "document_name": name,
-            "page": chunk.page,
-            "content": chunk.content,
-            "score": round(1 - float(dist), 4),
+            "chunk_id": row.id,
+            "document_id": row.document_id,
+            "document_name": row.document_name,
+            "page": row.page,
+            "content": row.content,
+            "score": round(1 - float(row.distance), 4),
         }
-        for i, (chunk, name, dist) in enumerate(rows, start=1)
+        for i, row in enumerate(rows, start=1)
     ]
 
 
